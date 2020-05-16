@@ -349,18 +349,6 @@ void Buffer::unlocked_flush() {
     ensure(hidden_blocks_allocated + cover_blocks_allocated == block_mapping.size(), "Buffer::unlocked_flush")
         << "Changed stats do not match";
 
-//     for (auto& x : to_flush) {
-//         ensure(block_mapping[cache[x.second].logical_block_id].physical_block_id == NO_BLOCK_ASSIGNED, "");
-//     }
-
-//     auto count = 0u;
-//     for (auto& x : reverse_block_mapping) {
-//         if (x.second == NO_BLOCK_ASSIGNED) {
-//             ++count;
-//         }
-//     }
-//     ensure(count == unallocated_list.size(), "");
-
     ensure(disk.numberOfBlocks() == block_mapping.size() - to_flush.size() + unallocated_list.size() + virtual_list.size() + number_of_mapping_blocks * 2, "Buffer::unlocked_flush")
         << "Flush sizes don't add up: "
         << disk.numberOfBlocks() << " total blocks, "
@@ -452,16 +440,6 @@ void Buffer::unlocked_flush() {
     writeEntriesTable();
 
     cover_blocks_changed = hidden_blocks_changed = 0;
-
-//     {
-//         auto count = 0u;
-//         for (auto& x : reverse_block_mapping) {
-//             if (x.second == NO_BLOCK_ASSIGNED) {
-//                 ++count;
-//             }
-//         }
-//         ensure(count == unallocated_list.size(), "");
-//     }
 }
 
 void Buffer::writeEntriesTable() {
