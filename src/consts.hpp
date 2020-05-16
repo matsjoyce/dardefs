@@ -24,21 +24,27 @@ const unsigned int CIPHER_BLOCK_SIZE = 16;
 const unsigned int IV_SIZE = CIPHER_BLOCK_SIZE;
 const unsigned int KEY_SIZE = 16;
 const unsigned int LOGICAL_BLOCK_SIZE = PHYSICAL_BLOCK_SIZE - IV_SIZE;
-const unsigned int BLOCK_MAPPING_ENTRY_SIZE = 16;
+
+const unsigned int BLOCK_POINTER_SIZE = 4;
+const unsigned int MAPPING_POINTERS_PER_BLOCK = LOGICAL_BLOCK_SIZE / BLOCK_POINTER_SIZE;
 
 const unsigned char FILE_TYPE = 'F';
 const unsigned char DIR_TYPE = 'D';
 
 const unsigned int NUM_HEADER_BLOCK_TREE_ENTRIES = 8;
-const unsigned int NUM_TREE_BLOCK_TREE_ENTRIES = LOGICAL_BLOCK_SIZE / 4;
+const unsigned int NUM_TREE_BLOCK_TREE_ENTRIES = LOGICAL_BLOCK_SIZE / BLOCK_POINTER_SIZE;
 const unsigned int BLOCK_TREE_OFFSET = 1;
 
-const unsigned int DATA_OFFSET = BLOCK_TREE_OFFSET + 4 + 4 * NUM_HEADER_BLOCK_TREE_ENTRIES;
+const unsigned int DATA_OFFSET = BLOCK_TREE_OFFSET + BLOCK_POINTER_SIZE + BLOCK_POINTER_SIZE * NUM_HEADER_BLOCK_TREE_ENTRIES;
 const unsigned int DATA_SIZE = LOGICAL_BLOCK_SIZE - DATA_OFFSET;
-const unsigned int FILE_HEADER_SIZE = 4;
+const unsigned int FILE_HEADER_SIZE = BLOCK_POINTER_SIZE;
 
 const unsigned int FILE_NAME_SIZE = 255;
-const unsigned int FILE_PTR_SIZE = 4;
-const unsigned int BTREE_RECORD_SIZE = FILE_NAME_SIZE + FILE_PTR_SIZE;
+const unsigned int BTREE_RECORD_SIZE = FILE_NAME_SIZE + BLOCK_POINTER_SIZE;
+
+const unsigned int DIR_LOOKUP_COST = 10;
+const unsigned int DIR_WRITE_COST = DIR_LOOKUP_COST * 2;
+
+const unsigned int FILE_LOOKUP_COST = 4;
 
 #endif // CONSTS_HPP

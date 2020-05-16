@@ -36,6 +36,8 @@ public:
     std::pair<bool, unsigned int> block_id() const;
 
     unsigned int size(); // XXX const this
+    unsigned int numberOfBlocks() const;
+    unsigned int blocksForSize(unsigned int size) const;
 
     unsigned int read(unsigned int pos, unsigned int n, unsigned char* buf);
     unsigned int write(unsigned int pos, unsigned int n, const unsigned char* buf);

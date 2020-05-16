@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <bit>
 #include <sstream>
+#include <iostream>
 
 
 inline uint32_t intFromBytes(const unsigned char* bytes) {
@@ -52,6 +53,7 @@ public:
 
     ~ensure() noexcept(false) {
         if (!ok) {
+            std::cerr << stream->str() << std::endl;
             throw std::logic_error(stream->str());
         }
     }

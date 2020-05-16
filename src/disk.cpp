@@ -39,14 +39,11 @@ Disk::Disk(std::string fname, secure_string cover_key, secure_string hidden_key)
     file.open(fname, std::ios::ate | std::ios::out | std::ios::in | std::ios::binary);
     ensure(!!file, "Disk::Disk") << "File could not be opened";
     file_size = file.tellg();
-    ensure(file_size % (PHYSICAL_BLOCK_SIZE + BLOCK_MAPPING_ENTRY_SIZE) == 0, "Disk::Disk") << "File size is not a multiple of the block size";
-    number_of_blocks = file_size / (PHYSICAL_BLOCK_SIZE + BLOCK_MAPPING_ENTRY_SIZE);
-    blocks_offset = number_of_blocks * BLOCK_MAPPING_ENTRY_SIZE;
+    ensure(file_size % PHYSICAL_BLOCK_SIZE == 0, "Disk::Disk") << "File size is not a multiple of the block size";
+    number_of_blocks = file_size / PHYSICAL_BLOCK_SIZE;
 }
 
 void Disk::readRawBlock(unsigned int location, secure_string& out) {
-//     std::cout << "Read from " << location << " of " << out.size() << std::endl;
-
     std::lock_guard<std::mutex> guard(file_lock);
 
     file.seekg(location);
@@ -56,8 +53,6 @@ void Disk::readRawBlock(unsigned int location, secure_string& out) {
 }
 
 void Disk::writeRawBlock(unsigned int location, const secure_string& in) {
-//     std::cout << "Write to " << location << " of " << in.size() << std::endl;
-
     std::lock_guard<std::mutex> guard(file_lock);
 
     file.seekg(location);
@@ -114,7 +109,7 @@ void Disk::readBlock(unsigned int location, bool hidden, secure_string& buffer) 
 
     secure_string physical_block_buffer(PHYSICAL_BLOCK_SIZE, '\0');
 
-    readRawBlock(location * PHYSICAL_BLOCK_SIZE + blocks_offset, physical_block_buffer);
+    readRawBlock(location * PHYSICAL_BLOCK_SIZE, physical_block_buffer);
     decryptBlock(physical_block_buffer, buffer, hidden);
 }
 
@@ -124,66 +119,9 @@ void Disk::writeBlock(unsigned int location, bool hidden, const secure_string& b
     secure_string physical_block_buffer(PHYSICAL_BLOCK_SIZE, '\0');
 
     encryptBlock(buffer, physical_block_buffer, hidden);
-    writeRawBlock(location * PHYSICAL_BLOCK_SIZE + blocks_offset, physical_block_buffer);
+    writeRawBlock(location * PHYSICAL_BLOCK_SIZE, physical_block_buffer);
 }
 
-std::tuple<BlockMappingType, unsigned int, unsigned int> Disk::readBlockMapping(unsigned int location) {
-    secure_string phy_buf(BLOCK_MAPPING_ENTRY_SIZE, '\0');
-    secure_string log_buf(BLOCK_MAPPING_ENTRY_SIZE, '\0');
-
-    readRawBlock(location * BLOCK_MAPPING_ENTRY_SIZE, phy_buf);
-
-    {
-        CryptoPP::AESDecryption(&cover_key[0], KEY_SIZE).ProcessBlock(&phy_buf[0], &log_buf[0]);
-        auto id1 = intFromBytes(&log_buf[0]),
-             id2 = intFromBytes(&log_buf[4]),
-             generation = intFromBytes(&log_buf[8]);
-
-        if (id1 == id2) {
-            return {BlockMappingType::COVER, id1, generation};
-        }
-    }
-
-    {
-        CryptoPP::AESDecryption(&hidden_key[0], KEY_SIZE).ProcessBlock(&phy_buf[0], &log_buf[0]);
-        auto id1 = intFromBytes(&log_buf[0]),
-             id2 = intFromBytes(&log_buf[4]),
-             generation = intFromBytes(&log_buf[8]);
-
-        if (id1 == id2) {
-            return {BlockMappingType::HIDDEN, id1, generation};
-        }
-    }
-
-    return {BlockMappingType::NEITHER, 0, 0};
-}
-
-void Disk::writeBlockMapping(unsigned int location, BlockMappingType type, unsigned int block_id, unsigned int generation) {
-    secure_string phy_buf(BLOCK_MAPPING_ENTRY_SIZE, '\0');
-
-    intToBytes(&phy_buf[0], block_id);
-    intToBytes(&phy_buf[4], block_id);
-    intToBytes(&phy_buf[8], generation);
-    CryptoPP::OS_GenerateRandomBlock(false, &phy_buf[12], 4);
-
-    switch (type) {
-        case BlockMappingType::COVER: {
-            CryptoPP::AESEncryption(&cover_key[0], KEY_SIZE).ProcessBlock(&phy_buf[0], &phy_buf[0]);
-            break;
-        }
-        case BlockMappingType::HIDDEN: {
-            CryptoPP::AESEncryption(&hidden_key[0], KEY_SIZE).ProcessBlock(&phy_buf[0], &phy_buf[0]);
-            break;
-        }
-        case BlockMappingType::NEITHER: {
-            CryptoPP::OS_GenerateRandomBlock(false, &phy_buf[0], BLOCK_MAPPING_ENTRY_SIZE);
-            break;
-        }
-    }
-
-    writeRawBlock(location * BLOCK_MAPPING_ENTRY_SIZE, phy_buf);
-}
-
-unsigned int Disk::numberOfBlocks() {
+unsigned int Disk::numberOfBlocks() const {
     return number_of_blocks;
 }

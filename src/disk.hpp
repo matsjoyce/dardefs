@@ -35,7 +35,7 @@ enum class BlockMappingType {
 class Disk {
     std::fstream file;
     std::mutex file_lock;
-    unsigned int number_of_blocks, blocks_offset;
+    unsigned int number_of_blocks;
     unsigned int file_size;
     secure_string cover_key, hidden_key;
 
@@ -50,10 +50,7 @@ public:
     void readBlock(unsigned int location, bool hidden, secure_string& buffer);
     void writeBlock(unsigned int location, bool hidden, const secure_string& buffer);
 
-    std::tuple<BlockMappingType, unsigned int, unsigned int> readBlockMapping(unsigned int location);
-    void writeBlockMapping(unsigned int location, BlockMappingType type, unsigned int block_id, unsigned int generation);
-
-    unsigned int numberOfBlocks();
+    unsigned int numberOfBlocks() const;
 };
 
 #endif // DISK_HPP

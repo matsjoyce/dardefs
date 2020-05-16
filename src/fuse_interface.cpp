@@ -34,6 +34,7 @@ const int OK = 0;
 const std::string COVER_NAME = "cover";
 const std::string HIDDEN_NAME = "hidden";
 const fuse_fill_dir_flags FILL_DIR_NULL = static_cast<fuse_fill_dir_flags>(0);
+const unsigned int ENOTENOUGHCOVER = EPERM;
 
 static Buffer* global_buffer;
 
@@ -103,7 +104,7 @@ DirFileOrError get_for_fname(const char* fname, fuse_file_info* fi=nullptr) {
         fname += COVER_NAME.size();
     }
     else if (startswith(fname, HIDDEN_NAME)) {
-        hidden = true;
+        hidden = global_buffer->hasHidden();
         fname += HIDDEN_NAME.size();
     }
     else {
@@ -129,10 +130,8 @@ DirFileOrError get_for_fname(const char* fname, fuse_file_info* fi=nullptr) {
             part.replace(0, secure_string::npos, reinterpret_cast<const unsigned char*>(fname));
             fname += part.size();
         }
-        std::cout << part << std::endl;
         if (std::holds_alternative<Dir>(current)) {
             auto& dir = std::get<Dir>(current);
-            dir.debug();
             auto iter = dir.find(part);
             if (iter == dir.end()) {
                 return {-ENOENT};
@@ -158,6 +157,7 @@ DirFileOrError get_for_fname(const char* fname, fuse_file_info* fi=nullptr) {
 }
 
 int f_getattr(const char* fname, struct stat* st, fuse_file_info* fi) {
+    auto op = global_buffer->operation(DIR_LOOKUP_COST);
     auto f = get_for_fname(fname, fi);
 
     st->st_gid = getgid();
@@ -195,6 +195,7 @@ int f_getattr(const char* fname, struct stat* st, fuse_file_info* fi) {
 }
 
 int f_mkdir(const char* path, mode_t /*mode*/) {
+    auto op = global_buffer->operation(DIR_LOOKUP_COST + 1);
     auto [base, fname] = split_path(path);
     auto f = get_for_fname(base.c_str(), nullptr);
 
@@ -210,6 +211,9 @@ int f_mkdir(const char* path, mode_t /*mode*/) {
             if (dir.find(string_to_ss(fname)) != dir.end()) {
                 return -EEXIST;
             }
+            if (!global_buffer->allowed(dir.block_id().first, 1, DIR_LOOKUP_COST, 0)) {
+                return -ENOTENOUGHCOVER;
+            }
             auto new_d = Dir::newDir(*global_buffer, dir.block_id().first);
             dir.add(string_to_ss(fname), new_d.block_id().second);
             break;
@@ -223,6 +227,7 @@ int f_mkdir(const char* path, mode_t /*mode*/) {
 }
 
 int f_unlink(const char* path) {
+    auto op = global_buffer->operation(DIR_LOOKUP_COST + 1 + FILE_LOOKUP_COST + 1);
     auto [base, fname] = split_path(path);
     auto f = get_for_fname(base.c_str(), nullptr);
 
@@ -250,10 +255,14 @@ int f_unlink(const char* path) {
             else if (std::holds_alternative<File>(dir_or_file)) {
                 {
                     auto rem_f = std::move(std::get<File>(dir_or_file));
+                    if (!global_buffer->allowed(dir.block_id().first, 0, 0, rem_f.numberOfBlocks())) {
+                        return -ENOTENOUGHCOVER;
+                    }
                     rem_f.truncate(0);
                 }
                 global_buffer->deallocateBlock(blk_id, dir.block_id().first);
                 dir.remove(string_to_ss(fname));
+//                 dir.debug();
                 return OK;
             }
             else {
@@ -268,6 +277,7 @@ int f_unlink(const char* path) {
 }
 
 int f_rmdir(const char* path) {
+    auto op = global_buffer->operation(DIR_LOOKUP_COST + 1);
     auto [base, fname] = split_path(path);
     auto f = get_for_fname(base.c_str(), nullptr);
 
@@ -296,6 +306,9 @@ int f_rmdir(const char* path) {
                         return -ENOTEMPTY;
                     }
                 }
+                if (!global_buffer->allowed(dir.block_id().first, 0, DIR_LOOKUP_COST, 1)) {
+                    return -ENOTENOUGHCOVER;
+                }
                 global_buffer->deallocateBlock(blk_id, dir.block_id().first);
                 dir.remove(string_to_ss(fname));
                 return OK;
@@ -315,6 +328,7 @@ int f_rmdir(const char* path) {
 }
 
 int f_rename(const char* old_path, const char* new_path, unsigned int flags) {
+    auto op = global_buffer->operation(DIR_LOOKUP_COST + 2 + FILE_LOOKUP_COST + 1);
     switch (flags) {
         case 0:
         case RENAME_EXCHANGE:
@@ -389,6 +403,10 @@ int f_rename(const char* old_path, const char* new_path, unsigned int flags) {
         return -EINVAL;
     }
 
+    if (!global_buffer->allowed(old_dir.block_id().first, DIR_LOOKUP_COST * 2, DIR_LOOKUP_COST * 2, 0)) {
+        return -ENOTENOUGHCOVER;
+    }
+
     {
         auto new_iter = new_dir.find(string_to_ss(new_fname));
         if (new_iter == new_dir.end()) {
@@ -420,6 +438,9 @@ int f_rename(const char* old_path, const char* new_path, unsigned int flags) {
             else if (std::holds_alternative<File>(dir_or_file)) {
                 {
                     auto rem_f = std::move(std::get<File>(dir_or_file));
+                    if (!global_buffer->allowed(rem_f.block_id().first, DIR_LOOKUP_COST * 2, DIR_LOOKUP_COST * 2, rem_f.numberOfBlocks())) {
+                        return -ENOTENOUGHCOVER;
+                    }
                     rem_f.truncate(0);
                 }
                 global_buffer->deallocateBlock(new_blk_id, new_dir.block_id().first);
@@ -447,6 +468,7 @@ int f_rename(const char* old_path, const char* new_path, unsigned int flags) {
 }
 
 int f_truncate(const char* fname, off_t size, struct fuse_file_info* fi) {
+    auto op = global_buffer->operation(DIR_LOOKUP_COST + 1 + FILE_LOOKUP_COST + 1);
     auto f = get_for_fname(fname, fi);
 
     switch (DFOE_type(f)) {
@@ -461,6 +483,10 @@ int f_truncate(const char* fname, off_t size, struct fuse_file_info* fi) {
         }
         case DFOE_TYPE::FILE: {
             auto& file = std::get<File>(f);
+            auto blocks_removed = file.numberOfBlocks() - std::max(file.numberOfBlocks(), file.blocksForSize(size));
+            if (!global_buffer->allowed(file.block_id().first, 0, 0, blocks_removed)) {
+                return -ENOTENOUGHCOVER;
+            }
             file.truncate(size);
             break;
         }
@@ -469,6 +495,7 @@ int f_truncate(const char* fname, off_t size, struct fuse_file_info* fi) {
 }
 
 int f_open(const char* fname, fuse_file_info* fi) {
+    auto op = global_buffer->operation(DIR_LOOKUP_COST);
     auto f = get_for_fname(fname, fi);
 
     switch (DFOE_type(f)) {
@@ -492,6 +519,7 @@ int f_open(const char* fname, fuse_file_info* fi) {
 }
 
 int f_read(const char* fname, char* buf, size_t size, off_t offset, fuse_file_info* fi) {
+    auto op = global_buffer->operation(DIR_LOOKUP_COST + 1 + FILE_LOOKUP_COST + 1);
     auto f = get_for_fname(fname, fi);
 
     switch (DFOE_type(f)) {
@@ -513,6 +541,10 @@ int f_read(const char* fname, char* buf, size_t size, off_t offset, fuse_file_in
 }
 
 int f_write(const char* fname, const char* buf, size_t size, off_t offset, fuse_file_info* fi) {
+    auto op = global_buffer->operation(
+        DIR_LOOKUP_COST + 1 + FILE_LOOKUP_COST + 1
+        + size / LOGICAL_BLOCK_SIZE + 1
+        + size / LOGICAL_BLOCK_SIZE / BLOCK_POINTER_SIZE + 1);
     auto f = get_for_fname(fname, fi);
 
     switch (DFOE_type(f)) {
@@ -527,6 +559,9 @@ int f_write(const char* fname, const char* buf, size_t size, off_t offset, fuse_
         }
         case DFOE_TYPE::FILE: {
             auto& file = std::get<File>(f);
+            if (!global_buffer->allowed(file.block_id().first, size / LOGICAL_BLOCK_SIZE + 1 + size / LOGICAL_BLOCK_SIZE / BLOCK_POINTER_SIZE + 1 + 1 + FILE_LOOKUP_COST, 0, 0)) {
+                return -ENOTENOUGHCOVER;
+            }
             return file.write(offset, size, reinterpret_cast<const unsigned char*>(buf));
         }
     }
@@ -534,6 +569,7 @@ int f_write(const char* fname, const char* buf, size_t size, off_t offset, fuse_
 }
 
 int f_statfs(const char* fname, struct statvfs* st) {
+    auto op = global_buffer->operation(DIR_LOOKUP_COST);
     auto f = get_for_fname(fname, nullptr);
 
     st->f_bavail = 0;
@@ -541,18 +577,18 @@ int f_statfs(const char* fname, struct statvfs* st) {
     st->f_favail = -1;
     st->f_ffree = -1;
     st->f_files = -1;
-    st->f_flag = ST_NOATIME | ST_NODEV | ST_NODIRATIME | ST_NOEXEC | ST_NOSUID | ST_SYNCHRONOUS;
+    st->f_flag = ST_NOATIME | ST_NODEV | ST_NODIRATIME | ST_NOEXEC | ST_NOSUID;
     st->f_frsize = LOGICAL_BLOCK_SIZE;
     st->f_namemax = FILE_NAME_SIZE;
 
-    bool hidden;
+    bool hidden = false;
     switch (DFOE_type(f)) {
         case DFOE_TYPE::ERROR: {
             return std::get<int>(f);
         }
         case DFOE_TYPE::ROOT: {
-            st->f_bfree = global_buffer->totalBlocks() - global_buffer->blocksAllocated();
-            st->f_blocks = st->f_bavail = global_buffer->totalBlocks();
+            st->f_bfree = st->f_bavail = global_buffer->totalBlocks() - global_buffer->blocksAllocated();
+            st->f_blocks = global_buffer->totalBlocks();
             return OK;
         }
         case DFOE_TYPE::DIR: {
@@ -564,8 +600,8 @@ int f_statfs(const char* fname, struct statvfs* st) {
             break;
         }
     };
-    st->f_bfree = global_buffer->blocksForAspect(hidden) - global_buffer->blocksAllocatedForAspect(hidden);
-    st->f_blocks = st->f_bavail = global_buffer->blocksForAspect(hidden);
+    st->f_bfree = st->f_bavail = global_buffer->blocksForAspect(hidden) - global_buffer->blocksAllocatedForAspect(hidden);
+    st->f_blocks = global_buffer->blocksForAspect(hidden);
     return OK;
 }
 
@@ -574,6 +610,7 @@ int f_release(const char* /*fname*/, fuse_file_info* /*fi*/) {
 }
 
 int f_opendir(const char* fname, fuse_file_info* fi) {
+    auto op = global_buffer->operation(DIR_LOOKUP_COST);
     auto f = get_for_fname(fname, fi);
 
     switch (DFOE_type(f)) {
@@ -597,6 +634,7 @@ int f_opendir(const char* fname, fuse_file_info* fi) {
 }
 
 int f_readdir(const char* fname, void* buf, fuse_fill_dir_t filler, off_t /*offset*/, fuse_file_info* fi, fuse_readdir_flags /*flag*/) {
+    auto op = global_buffer->operation(DIR_LOOKUP_COST);
     auto f = get_for_fname(fname, fi);
 
     filler(buf, ".", NULL, 0, FILL_DIR_NULL);
@@ -638,6 +676,7 @@ void f_destroy(void*) {
 }
 
 int f_access(const char* fname, int flags) {
+    auto op = global_buffer->operation(DIR_LOOKUP_COST);
     auto f = get_for_fname(fname, nullptr);
 
     switch (DFOE_type(f)) {
@@ -662,6 +701,7 @@ int f_access(const char* fname, int flags) {
 }
 
 int f_create(const char* path, mode_t /*mode*/, fuse_file_info* fi) {
+    auto op = global_buffer->operation(DIR_LOOKUP_COST + 1);
     auto [base, fname] = split_path(path);
     auto f = get_for_fname(base.c_str(), nullptr);
 
@@ -677,8 +717,12 @@ int f_create(const char* path, mode_t /*mode*/, fuse_file_info* fi) {
             if (dir.find(string_to_ss(fname)) != dir.end()) {
                 return -EEXIST;
             }
+            if (!global_buffer->allowed(dir.block_id().first, DIR_LOOKUP_COST + 1, DIR_LOOKUP_COST, 0)) {
+                return -ENOTENOUGHCOVER;
+            }
             auto new_f = File::newFile(*global_buffer, dir.block_id().first);
             fi->fh = fh_from_location(new_f.block_id());
+//             dir.debug();
             dir.add(string_to_ss(fname), new_f.block_id().second);
             break;
         }
@@ -718,9 +762,10 @@ int run_fuse(Buffer& buf, const std::string& mount_point) {
 
 #pragma GCC diagnostic pop
 
-    std::vector<std::string> args = {"fuse", "-f", mount_point, "-d"};
-//         if self.debug:
-//             args.append("-d")
+    std::vector<std::string> args = {"fuse", "-f", mount_point};
+    if (buf.isDebugging()) {
+        args.push_back("-d");
+    }
     std::vector<char*> char_args;
     for (auto& arg : args) {
         char_args.push_back(const_cast<char*>(arg.c_str()));

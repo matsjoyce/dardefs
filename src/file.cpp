@@ -47,6 +47,17 @@ unsigned int File::size() {
     return intFromBytes(&fb.acc.read()[fb.offset]);
 }
 
+unsigned int File::numberOfBlocks() const {
+    return bf.numberOfBlocks();
+}
+
+unsigned int File::blocksForSize(unsigned int size) const {
+    auto stop_bytes = size + FILE_HEADER_SIZE;
+    auto stop = bf.positionForByte(stop_bytes);
+    auto stop_block = stop.second ? stop.first : stop.first - 1;
+    return std::max(1u, stop_block);
+}
+
 unsigned int File::read(unsigned int pos, unsigned int n, unsigned char* buf) {
     auto bytes_start = std::min(pos, size()) + FILE_HEADER_SIZE;
     auto start = bf.positionForByte(bytes_start);
@@ -87,7 +98,6 @@ unsigned int File::write(unsigned int pos, unsigned int n, const unsigned char* 
             auto fb = *iter;
             auto write_start = iter.position() == start.first ? start.second : 0;
             auto write_amt = iter.position() == stop.first ? (start.first == stop.first ? stop.second - write_start : stop.second) : fb.size - write_start;
-            std::cout << iter.position() << " " << write_start << " " << write_amt << std::endl;
             memcpy(
                 &fb.acc.writable()[fb.offset + write_start],
                 &buf[copied],
@@ -110,11 +120,10 @@ unsigned int File::write(unsigned int pos, unsigned int n, const unsigned char* 
 }
 
 void File::truncate(unsigned int pos) {
+    auto num_blocks = blocksForSize(pos);
     auto stop_bytes = std::min(pos, size()) + FILE_HEADER_SIZE;
-    auto stop = bf.positionForByte(stop_bytes);
-    auto stop_block = stop.second ? stop.first : stop.first - 1;
 
-    while (bf.numberOfBlocks() > std::max(1u, stop_block)) {
+    while (bf.numberOfBlocks() > num_blocks) {
         bf.removeBlock();
     }
     {

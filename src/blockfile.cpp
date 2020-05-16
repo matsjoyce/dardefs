@@ -85,7 +85,6 @@ BlockFileIterator BlockFile::begin() {
 }
 
 BlockFileIterator BlockFile::iter(unsigned int start) {
-    tree.debug();
     return {*this, start};
 }
 
@@ -95,7 +94,7 @@ BlockFileIterator BlockFile::end() {
 
 BlockFileIterator::BlockFileIterator(BlockFile& file, unsigned int start) :
         file(file), very_start(start == 0), iter(file.tree.iter(start == 0 ? 0 : start - 1)) {
-    if (!iter.at_end() and !iter.at_start()) {
+    if (!iter.at_end() && !very_start) {
         node_acc = std::make_unique<BlockAccessor>(file.buffer.block(*iter, file.header_acc.block_id().first));
     }
 }

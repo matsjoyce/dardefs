@@ -25,7 +25,7 @@
 
 const unsigned int NO_BLOCK = -1;
 const unsigned int BTREE_HEADER_OFFSET = 9;
-const unsigned int BTREE_HEADER_SIZE = LOGICAL_BLOCK_SIZE - BTREE_HEADER_OFFSET - 200; // XXX
+const unsigned int BTREE_HEADER_SIZE = LOGICAL_BLOCK_SIZE - BTREE_HEADER_OFFSET;
 const unsigned int BTREE_NODE_OFFSET = 0;
 const unsigned int BTREE_NODE_SIZE = LOGICAL_BLOCK_SIZE;
 
@@ -161,11 +161,7 @@ void remove_from_node(unsigned int idx, BlockAccessor& acc, unsigned int offset,
     intToBytes(&acc.writable()[end_pos + FILE_NAME_SIZE], NO_BLOCK);
 }
 
-// bool Dir::node_add(const secure_string& fname, unsigned int value) {
-
-// }
 void Dir::split_root() {
-    std::cout << "SPLIT ROOT" << std::endl;
     auto new_block_acc = buffer.allocateBlock(block_id().first);
     clean_node_block(new_block_acc, BTREE_NODE_OFFSET, BTREE_NODE_SIZE, height() == 0);
     memcpy(&new_block_acc.writable()[0], &header_acc.read()[BTREE_HEADER_OFFSET], BTREE_HEADER_SIZE);
@@ -176,7 +172,6 @@ void Dir::split_root() {
 }
 
 void Dir::unsplit_root() {
-    std::cout << "UNSPLIT ROOT" << std::endl;
     ensure(height() > 0, "Dir::unsplit_root") << "Can't unsplit tree of height 0";
     ensure(node_used(header_acc, BTREE_HEADER_OFFSET, BTREE_HEADER_SIZE, false) == 0, "Dir::unsplit_root")
         << "Can't unsplit root when it has " << node_used(header_acc, BTREE_HEADER_OFFSET, BTREE_HEADER_SIZE, false) + 1 << " children";
@@ -206,7 +201,6 @@ std::tuple<unsigned int, secure_string, unsigned int> Dir::split_node(unsigned i
     auto middle_value = intFromBytes(&acc.read()[byte_middle_pos] + FILE_NAME_SIZE);
     clean_node_block(acc, byte_middle_pos - (4 * !is_leaf), BTREE_NODE_SIZE - byte_middle_pos + BTREE_NODE_OFFSET, is_leaf);
     intToBytes(&header_acc.writable()[1], blocks() + 1);
-    std::cout << "SPLIT ON " << middle_fname << std::endl;
     return {new_acc.block_id().second, middle_fname, middle_value};
 }
 
@@ -219,7 +213,7 @@ bool Dir::node_add(const secure_string& fname, unsigned int value, unsigned int 
         }
 
         auto pos = find_key_pos_or_end(fname, acc, BTREE_NODE_OFFSET, BTREE_NODE_SIZE, true);
-        ensure(fname != fname_from_bytes(acc.read(), fname_location(BTREE_NODE_OFFSET, pos, true)), "Dir::add")
+        ensure(!fname_equals(fname, acc, fname_location(BTREE_NODE_OFFSET, pos, true)), "Dir::add")
             << "Duplicate entry " << fname;
         insert_to_node(fname, value, 0, pos, acc, BTREE_NODE_OFFSET, BTREE_NODE_SIZE, true);
         return true;
@@ -286,22 +280,13 @@ void Dir::add(const secure_string& fname, unsigned int value) {
     ensure(complete, "Dir::add") << "Insert not complete after block split!";
 }
 
-bool pop_left_largest_and_replace(Buffer& buf, BlockAccessor& acc, unsigned int byte_pos, unsigned int height) {
-    auto left_acc = buf.block(intFromBytes(&acc.read()[byte_pos-4]), acc.block_id().first);
-    auto left_pos = node_used(left_acc, BTREE_NODE_OFFSET, BTREE_NODE_SIZE, !(height - 1)) - 1;
-    auto left_byte_pos = fname_location(BTREE_NODE_OFFSET, left_pos, !(height - 1));
-    memcpy(&acc.writable()[byte_pos], &left_acc.read()[left_byte_pos], BTREE_RECORD_SIZE);
-    intToBytes(&left_acc.writable()[left_byte_pos + FILE_NAME_SIZE], NO_BLOCK);
-    return left_pos < num_keys(BTREE_NODE_SIZE, !(height - 1)) / 2;
-}
-
 void Dir::refill_node(BlockAccessor& top_acc, unsigned int uf_pos, unsigned int uf_byte_pos, unsigned int height, unsigned int top_offset, unsigned int top_size) {
-    std::cout << "RF " << uf_pos << std::endl;
-
+    if (top_acc.buffer().isDebugging()) {
+        std::cout << "Refilling node " << std::endl;
+    }
     auto uf_blk_id = intFromBytes(&top_acc.read()[uf_byte_pos - 4]);
     {
         auto uf_acc = buffer.block(uf_blk_id, block_id().first);
-        auto top_is_header = height == this->height();
         auto top_used = node_used(top_acc, top_offset, top_size, false);
         auto child_is_leaf = !(height - 1);
         auto uf_used = node_used(uf_acc, BTREE_NODE_OFFSET, BTREE_NODE_SIZE, child_is_leaf);
@@ -312,6 +297,9 @@ void Dir::refill_node(BlockAccessor& top_acc, unsigned int uf_pos, unsigned int 
             auto left_acc = buffer.block(intFromBytes(&top_acc.read()[left_byte_pos - 4]), block_id().first);
             auto left_used = node_used(left_acc, BTREE_NODE_OFFSET, BTREE_NODE_SIZE, child_is_leaf);
             if (left_used - 1 > half_child_num_keys) {
+                if (top_acc.buffer().isDebugging()) {
+                    std::cout << "Rotate from left" << std::endl;
+                }
                 // Rotate from left
                 // Move UF entries down one
                 memmove(
@@ -350,6 +338,9 @@ void Dir::refill_node(BlockAccessor& top_acc, unsigned int uf_pos, unsigned int 
             auto right_acc = buffer.block(intFromBytes(&top_acc.read()[right_byte_pos - 4]), block_id().first);
             auto right_used = node_used(right_acc, BTREE_NODE_OFFSET, BTREE_NODE_SIZE, child_is_leaf);
             if (right_used - 1 > half_child_num_keys) {
+                if (top_acc.buffer().isDebugging()) {
+                    std::cout << "Rotate from right" << std::endl;
+                }
                 // Rotate from right
                 // Copy top record to UF
                 memcpy(
@@ -386,6 +377,9 @@ void Dir::refill_node(BlockAccessor& top_acc, unsigned int uf_pos, unsigned int 
         // Must merge
 
         if (uf_pos) {
+            if (top_acc.buffer().isDebugging()) {
+                std::cout << "Merge with left" << std::endl;
+            }
             auto left_byte_pos = uf_byte_pos - record_size(false);
             auto left_acc = buffer.block(intFromBytes(&top_acc.read()[left_byte_pos - 4]), block_id().first);
             auto left_used = node_used(left_acc, BTREE_NODE_OFFSET, BTREE_NODE_SIZE, child_is_leaf);
@@ -406,6 +400,9 @@ void Dir::refill_node(BlockAccessor& top_acc, unsigned int uf_pos, unsigned int 
             remove_from_node(uf_pos - 1, top_acc, top_offset, top_size, false);
         }
         else if (uf_pos < top_used) {
+            if (top_acc.buffer().isDebugging()) {
+                std::cout << "Merge with right" << std::endl;
+            }
             auto right_byte_pos = uf_byte_pos + record_size(false);
             auto right_acc = buffer.block(intFromBytes(&top_acc.read()[right_byte_pos - 4]), block_id().first);
             auto right_used = node_used(right_acc, BTREE_NODE_OFFSET, BTREE_NODE_SIZE, child_is_leaf);
@@ -440,8 +437,39 @@ void Dir::refill_node(BlockAccessor& top_acc, unsigned int uf_pos, unsigned int 
             ensure(false, "Dir::refill_node") << "Could not refill node!";
         }
     }
-//     buffer.deallocateBlock(uf_blk_id, block_id().first);
-//     intToBytes(&header_acc.writable()[1], blocks() - 1);
+    buffer.deallocateBlock(uf_blk_id, block_id().first);
+    intToBytes(&header_acc.writable()[1], blocks() - 1);
+}
+
+bool Dir::pop_left_largest_and_replace_rec(BlockAccessor& orig_acc, unsigned int orig_byte_pos,
+                                           BlockAccessor& acc, unsigned int byte_pos, unsigned int height) {
+    auto blk_id = intFromBytes(&acc.read()[byte_pos-4]);
+    --height;
+    auto left_acc = buffer.block(blk_id, acc.block_id().first);
+    if (!height) {
+        auto left_pos = node_used(left_acc, BTREE_NODE_OFFSET, BTREE_NODE_SIZE, !height) - 1;
+        auto left_byte_pos = fname_location(BTREE_NODE_OFFSET, left_pos, !height);
+        memcpy(&orig_acc.writable()[orig_byte_pos], &left_acc.read()[left_byte_pos], BTREE_RECORD_SIZE);
+        intToBytes(&left_acc.writable()[left_byte_pos + FILE_NAME_SIZE], NO_BLOCK);
+        return left_pos < num_keys(BTREE_NODE_SIZE, height) / 2;
+    }
+    else {
+        auto left_pos = node_used(left_acc, BTREE_NODE_OFFSET, BTREE_NODE_SIZE, !height);
+        auto left_byte_pos = fname_location(BTREE_NODE_OFFSET, left_pos, !height);
+        auto res = pop_left_largest_and_replace_rec(orig_acc, orig_byte_pos, left_acc, left_byte_pos, height);
+        if (height + 1 == this->height()) {
+            return res;
+        }
+        else if (res) {
+            refill_node(left_acc, left_pos, left_byte_pos, height, BTREE_NODE_OFFSET, BTREE_NODE_SIZE);
+            return false;
+        }
+        return res;
+    }
+}
+
+bool Dir::pop_left_largest_and_replace(BlockAccessor& acc, unsigned int byte_pos, unsigned int height) {
+    return pop_left_largest_and_replace_rec(acc, byte_pos, acc, byte_pos, height);
 }
 
 std::pair<unsigned int, bool> Dir::node_remove(const secure_string& fname, unsigned int blck_id, unsigned int height) {
@@ -462,10 +490,7 @@ std::pair<unsigned int, bool> Dir::node_remove(const secure_string& fname, unsig
     auto bytes_pos = fname_location(BTREE_NODE_OFFSET, pos, false);
     if (fname_equals(fname, acc, bytes_pos)) {
         auto value = intFromBytes(&acc.read()[bytes_pos + FILE_NAME_SIZE]);
-        auto underfilled = pop_left_largest_and_replace(buffer, acc, bytes_pos, height);
-        if (underfilled) {
-            refill_node(acc, pos, bytes_pos, height, BTREE_NODE_OFFSET, BTREE_NODE_SIZE);
-        }
+        pop_left_largest_and_replace(acc, bytes_pos, height);
         return {value, node_used(acc, BTREE_NODE_OFFSET, BTREE_NODE_SIZE, false) < num_keys(BTREE_NODE_SIZE, false) / 2};
     }
     else {
@@ -495,13 +520,10 @@ unsigned int Dir::remove(const secure_string& fname) {
     auto bytes_pos = fname_location(BTREE_HEADER_OFFSET, pos, false);
     if (fname_equals(fname, header_acc, bytes_pos)) {
         auto value = intFromBytes(&header_acc.read()[bytes_pos + FILE_NAME_SIZE]);
-        auto underfilled = pop_left_largest_and_replace(buffer, header_acc, bytes_pos, height());
+        auto underfilled = pop_left_largest_and_replace(header_acc, bytes_pos, height());
         if (underfilled) {
             if (!node_used(header_acc, BTREE_HEADER_OFFSET, BTREE_HEADER_SIZE, false)) {
                 unsplit_root();
-            }
-            else {
-                refill_node(header_acc, pos, bytes_pos, height(), BTREE_HEADER_OFFSET, BTREE_HEADER_SIZE);
             }
         }
         return value;
@@ -610,17 +632,17 @@ DirIterator Dir::find(const secure_string& fname) const {
     auto blk_id = intFromBytes(&header_acc.read()[pos - 4]);
     for (auto h = 0u; h < height_; ++h) {
         auto& acc = accessors.size() ? accessors.back() : header_acc;
-        std::cout << "X" << fname_from_bytes(acc.read(), pos) << " " << positions.back() << " " << blk_id << std::endl;
         if (fname_equals(fname, acc, pos)) {
             return {*this, std::move(accessors), std::move(positions), block_id().first};
         }
         accessors.emplace_back(buffer.block(blk_id, block_id().first));
         positions.push_back(find_key_pos_or_end(fname, accessors.back(), BTREE_NODE_OFFSET, BTREE_NODE_SIZE, height_ == h + 1));
         pos = fname_location(BTREE_NODE_OFFSET, positions.back(), height_ == h + 1);
-        blk_id = intFromBytes(&accessors.back().read()[pos - 4]);
+        if (height_ != h + 1) {
+            blk_id = intFromBytes(&accessors.back().read()[pos - 4]);
+        }
     }
     auto& acc = accessors.size() ? accessors.back() : header_acc;
-    std::cout << "X" << fname_from_bytes(acc.read(), pos) << " " << positions.back() << " " << blk_id << std::endl;
     if (fname_equals(fname, acc, pos)) {
         return {*this, std::move(accessors), std::move(positions), block_id().first};
     }
@@ -670,12 +692,6 @@ DirIterator& DirIterator::operator++() {
         else {
             break;
         }
-    }
-    // XXX debugging, rmv
-    if (positions.size()) {
-        auto& acc = accessors.size() ? accessors.back() : dir.header_acc;
-        auto pos = fname_location(accessors.size() ? BTREE_NODE_OFFSET : BTREE_HEADER_OFFSET, positions.back(), accessors.size() == dir.height());
-        ensure(intFromBytes(&acc.read()[pos + FILE_NAME_SIZE]) != NO_BLOCK, "DirIterator::operator++()") << "E";
     }
     return *this;
 }

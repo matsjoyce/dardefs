@@ -32,7 +32,6 @@ std::vector<unsigned int> levels(unsigned int num_blocks) {
         offset /= NUM_TREE_BLOCK_TREE_ENTRIES;
     }
     res.push_back(offset);
-//     std::reverse(res.begin(), res.end());
     return res;
 }
 
@@ -59,8 +58,6 @@ void BlockTree::add(unsigned int value) {
         // Split
         auto node_acc = buffer.allocateBlock(hidden);
         node_acc.writable().replace(0, 4 * NUM_HEADER_BLOCK_TREE_ENTRIES, &acc.read()[offset + 4], 4 * NUM_HEADER_BLOCK_TREE_ENTRIES);
-        // XXX: Safety feature below, remove when confident.
-        acc.writable().replace(offset + 4, 4 * NUM_HEADER_BLOCK_TREE_ENTRIES, 4 * NUM_HEADER_BLOCK_TREE_ENTRIES, '\xff');
         intToBytes(&acc.writable()[offset + 4], node_acc.block_id().second);
         before_path.push_back(0);
     }
@@ -225,12 +222,6 @@ BlockTreeIterator::BlockTreeIterator(const BlockTree& tree, unsigned int start) 
 }
 
 void BlockTreeIterator::updateAccessors(unsigned int start_level) {
-//     std::cout << "S" << std::endl;
-//     std::cout << "PATH ";
-//     for (auto x : positions) {
-//         std::cout << x << " ";
-//     }
-//     std::cout << std::endl;
     if (position_ == tree.numberOfBlocks()) {
         accessors.clear();
         return;
@@ -249,14 +240,11 @@ void BlockTreeIterator::updateAccessors(unsigned int start_level) {
     else {
         block_id = intFromBytes(&accessors.back().read()[4 * positions[positions.size() - start_level - 1]]);
     }
-//     std::cout << "S " << block_id << " " << start_level << std::endl;
     for (unsigned int i = start_level + 1; i < positions.size(); ++i) {
         auto node_acc = tree.buffer.block(block_id, hidden);
         block_id = intFromBytes(&node_acc.read()[4 * positions[positions.size() - i - 1]]);
         accessors.emplace_back(std::move(node_acc));
-//         std::cout << "F " << block_id << std::endl;
     }
-//     std::cout << "E" << std::endl;
 }
 
 bool BlockTreeIterator::operator==(const BlockTreeIterator& other) const {
@@ -267,14 +255,12 @@ unsigned int BlockTreeIterator::operator*() const {
     if (positions.size() == 1) {
         return intFromBytes(&tree.acc.read()[tree.offset + 4 + 4 * positions.front()]);
     }
-    std::cout << positions.front() << " " << accessors.back().block_id().second << std::endl;
     return intFromBytes(&accessors.back().read()[4 * positions.front()]);
 }
 
 BlockTreeIterator& BlockTreeIterator::operator++() {
     ensure(position_ < tree.numberOfBlocks(), "BlockTreeIterator::operator++") << "Incrementing the end iterator";
     ++position_;
-//     std::cout << position << std::endl;
 
     unsigned int level = 0;
     for (; level < positions.size(); ++level) {

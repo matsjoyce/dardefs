@@ -49,6 +49,9 @@ class Dir {
     std::pair<unsigned int, bool> node_remove(const secure_string& fname, unsigned int blck_id, unsigned int height);
     std::tuple<unsigned int, secure_string, unsigned int> split_node(unsigned int blck_id, unsigned int height);
     void refill_node(BlockAccessor& top_acc, unsigned int uf_pos, unsigned int uf_byte_pos, unsigned int height, unsigned int top_offset, unsigned int top_size);
+    bool pop_left_largest_and_replace_rec(BlockAccessor& orig_acc, unsigned int orig_byte_pos,
+                                          BlockAccessor& acc, unsigned int byte_pos, unsigned int height);
+    bool pop_left_largest_and_replace(BlockAccessor& acc, unsigned int byte_pos, unsigned int height);
     void split_root();
     void unsplit_root();
     void merge_nodes();
